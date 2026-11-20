@@ -143,7 +143,7 @@ public struct StorefrontSelectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
-                        .bold()
+                        .font(.body.bold())
                 }
             }
         }
