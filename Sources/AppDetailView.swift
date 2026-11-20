@@ -24,11 +24,17 @@ public struct AppDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             compareVM.selectedStorefronts = settingsVM.favoriteStorefronts
+            if compareVM.priceResults.isEmpty && !compareVM.isLoading {
+                compareVM.startComparison()
+            }
         }
         .sheet(isPresented: $showStorefrontPicker) {
             StorefrontSelectionSheet(
                 selectedStorefronts: $compareVM.selectedStorefronts
             )
+            .onDisappear {
+                compareVM.startComparison()
+            }
         }
     }
 
@@ -111,10 +117,9 @@ public struct AppDetailView: View {
             .tint(.blue)
 
             Button {
-                compareVM.selectedStorefronts = settingsVM.favoriteStorefronts
                 compareVM.startComparison()
             } label: {
-                Label(compareVM.isLoading ? "Comparing..." : "Compare Prices", systemImage: "arrow.triangle.2.circlepath")
+                Label(compareVM.isLoading ? "Comparing..." : "Reload Prices", systemImage: "arrow.triangle.2.circlepath")
                     .font(.subheadline.bold())
                     .frame(maxWidth: .infinity)
             }
@@ -127,25 +132,29 @@ public struct AppDetailView: View {
     // MARK: - Comparison Results
 
     private var comparisonSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             if compareVM.isLoading {
                 VStack(spacing: 8) {
-                    ProgressView(value: Double(compareVM.progress), total: Double(compareVM.total))
+                    ProgressView(value: Double(compareVM.progress), total: Double(max(1, compareVM.total)))
                         .tint(.orange)
                     Text("Checking \(compareVM.progress)/\(compareVM.total) storefronts...")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
             }
 
             if !compareVM.priceResults.isEmpty {
-                // App price comparison
+                // App base price comparison
                 appPriceSection
 
-                // IAP comparison
+                // In-App Purchases comparison
                 if !compareVM.allIAPNames.isEmpty {
                     iapSection
+                } else if !compareVM.isLoading {
+                    noIAPsCard
                 }
             }
         }
@@ -155,42 +164,35 @@ public struct AppDetailView: View {
 
     private var appPriceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("App Price", systemImage: "dollarsign.circle.fill")
+            Label("App Store Price", systemImage: "dollarsign.circle.fill")
                 .font(.headline)
                 .foregroundColor(.primary)
 
-            ForEach(compareVM.priceResults) { result in
-                if result.error == nil {
+            VStack(spacing: 6) {
+                ForEach(compareVM.priceResults) { result in
                     HStack {
                         Text(result.storefront.flag)
                             .font(.title3)
                         Text(result.storefront.name)
                             .font(.subheadline)
-                        Spacer()
-                        Text(result.appPrice ?? "N/A")
-                            .font(.subheadline.bold())
-                            .foregroundColor(result.appPrice == "Free" ? .green : .primary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(10)
-                } else {
-                    HStack {
-                        Text(result.storefront.flag)
-                            .font(.title3)
-                        Text(result.storefront.name)
-                            .font(.subheadline)
-                        Spacer()
-                        Text("Error")
+                        Text("(\(result.storefront.currencyCode))")
                             .font(.caption)
-                            .foregroundColor(.red)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if let error = result.error {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text(result.appPrice ?? "Free")
+                                .font(.subheadline.bold())
+                                .foregroundColor(result.appPrice == "Free" ? .green : .primary)
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Color(.systemGray6))
                     .cornerRadius(10)
-                    .opacity(0.6)
                 }
             }
         }
@@ -200,9 +202,15 @@ public struct AppDetailView: View {
 
     private var iapSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("In-App Purchases", systemImage: "creditcard.fill")
-                .font(.headline)
-                .foregroundColor(.primary)
+            HStack {
+                Label("In-App Purchases", systemImage: "creditcard.fill")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+                Text("\(compareVM.allIAPNames.count) items")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
             ForEach(compareVM.allIAPNames, id: \.self) { iapName in
                 IAPComparisonCard(
@@ -211,6 +219,26 @@ public struct AppDetailView: View {
                 )
             }
         }
+    }
+
+    // MARK: - No IAPs Card
+
+    private var noIAPsCard: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.title2)
+                .foregroundColor(.secondary)
+            Text("No In-App Purchases Listed")
+                .font(.subheadline.bold())
+            Text("This app either does not offer in-app purchases or they are not public on the App Store storefronts.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
     }
 }
 
@@ -229,31 +257,39 @@ public struct IAPComparisonCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(iapName)
-                .font(.subheadline.bold())
-                .foregroundColor(.orange)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "tag.fill")
+                    .foregroundColor(.orange)
+                    .font(.caption)
+                Text(iapName)
+                    .font(.subheadline.bold())
+                    .foregroundColor(.primary)
+            }
+
+            Divider()
 
             ForEach(Array(iapRows.enumerated()), id: \.offset) { _, row in
                 HStack {
                     Text(row.storefront.flag)
-                    Text(row.storefront.code)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 28, alignment: .leading)
+                        .font(.body)
+                    Text(row.storefront.name)
+                        .font(.subheadline)
                     Spacer()
                     if let iap = row.iap {
                         Text(iap.formattedPrice)
                             .font(.subheadline.bold())
+                            .foregroundColor(.orange)
                     } else {
                         Text("Not available")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
+                .padding(.vertical, 2)
             }
         }
-        .padding()
+        .padding(12)
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }

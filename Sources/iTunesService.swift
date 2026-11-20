@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - iTunes Search / Lookup Service
+// MARK: - iTunes Search & App Store Service
 
 public final class iTunesService {
     public static let shared = iTunesService()
@@ -54,114 +54,194 @@ public final class iTunesService {
         return result.results.first
     }
 
-    // MARK: - Lookup with IAPs
+    // MARK: - Scrape In-App Purchases from App Store Web Page
 
-    /// Look up an app including its in-app purchases in a given storefront.
-    /// The iTunes API returns IAPs as separate results with wrapperType "software" kind "in-app-purchase"
-    /// when using `entity=software,inApp` or by scraping the app page.
-    /// We use the lookup endpoint which returns IAP info in `iapItems`.
-    public func lookupAppWithIAPs(trackId: Int, country: String = "US") async throws -> (app: AppResult?, iaps: [InAppPurchase]) {
-        // The lookup endpoint with software entity returns the app
-        let urlString = "https://itunes.apple.com/lookup?id=\(trackId)&country=\(country)&entity=inApp"
-        guard let url = URL(string: urlString) else {
-            throw ServiceError.invalidURL
+    /// Fetch In-App Purchases for an app in a specific country storefront by scraping the public App Store page.
+    public func fetchIAPs(trackId: Int, country: String, defaultCurrency: String) async -> [InAppPurchase] {
+        let countryCode = country.lowercased()
+        guard let url = URL(string: "https://apps.apple.com/\(countryCode)/app/id\(trackId)") else {
+            return []
         }
 
-        let (data, response) = try await session.data(from: url)
-        try validateResponse(response)
+        var request = URLRequest(url: url)
+        // Desktop User-Agent prevents Apple from redirecting to itms-appss://
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 12
 
-        // Parse as generic JSON since IAPs come in a mixed format
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let results = json["results"] as? [[String: Any]] else {
-            return (nil, [])
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return []
+            }
+            guard let html = String(data: data, encoding: .utf8) else {
+                return []
+            }
+            return parseIAPs(from: html, defaultCurrency: defaultCurrency)
+        } catch {
+            return []
         }
+    }
 
-        var app: AppResult?
-        var iaps: [InAppPurchase] = []
+    // MARK: - Parse IAPs from HTML
 
-        for item in results {
-            let wrapperType = item["wrapperType"] as? String ?? ""
+    private func parseIAPs(from html: String, defaultCurrency: String) -> [InAppPurchase] {
+        var results: [InAppPurchase] = []
+        var seen = Set<String>()
 
-            if wrapperType == "software" {
-                // This is the app itself
-                if let itemData = try? JSONSerialization.data(withJSONObject: item),
-                   let decoded = try? decoder.decode(AppResult.self, from: itemData) {
-                    app = decoded
+        // Pattern 1: Rendered HTML list items: <div class="text-pair..."><span>Name</span> <span>Price</span></div>
+        let pattern1 = #"class="text-pair[^"]*">\s*<span>(.*?)</span>\s*<span>(.*?)</span>\s*</div>"#
+
+        // Pattern 2: JSON data embedded in page: "leadingText":"Name","trailingText":"Price"
+        let pattern2 = #""leadingText":"([^"]+)","trailingText":"([^"]+)""#
+
+        let patterns = [pattern1, pattern2]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+                continue
+            }
+
+            let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
+            let matches = regex.matches(in: html, options: [], range: nsRange)
+
+            if !matches.isEmpty {
+                for match in matches {
+                    guard match.numberOfRanges >= 3,
+                          let nameRange = Range(match.range(at: 1), in: html),
+                          let priceRange = Range(match.range(at: 2), in: html) else {
+                        continue
+                    }
+
+                    let rawName = String(html[nameRange])
+                    let rawPrice = String(html[priceRange])
+
+                    let name = cleanHTMLEntities(rawName)
+                    let price = cleanHTMLEntities(rawPrice)
+
+                    guard !name.isEmpty, !price.isEmpty else { continue }
+
+                    // Key to deduplicate exact duplicates while keeping items with different prices
+                    let key = "\(name)|\(price)"
+                    if !seen.contains(key) {
+                        seen.insert(key)
+                        results.append(InAppPurchase(
+                            name: name,
+                            formattedPrice: price,
+                            priceValue: nil,
+                            currency: defaultCurrency
+                        ))
+                    }
                 }
-            } else if wrapperType == "in-app-purchase" {
-                // This is an IAP
-                let name = item["trackName"] as? String ?? "Unknown"
-                let formattedPrice = item["formattedPrice"] as? String ?? "N/A"
-                let price = item["price"] as? Double
-                let currency = item["currency"] as? String ?? "USD"
 
-                iaps.append(InAppPurchase(
-                    name: name,
-                    formattedPrice: formattedPrice,
-                    priceValue: price,
-                    currency: currency
-                ))
+                // If first pattern found results, no need to fallback to second
+                if !results.isEmpty {
+                    break
+                }
             }
         }
 
-        return (app, iaps)
+        return results
+    }
+
+    private func cleanHTMLEntities(_ string: String) -> String {
+        var s = string
+        s = s.replacingOccurrences(of: "&amp;", with: "&")
+        s = s.replacingOccurrences(of: "&#39;", with: "'")
+        s = s.replacingOccurrences(of: "&quot;", with: "\"")
+        s = s.replacingOccurrences(of: "&lt;", with: "<")
+        s = s.replacingOccurrences(of: "&gt;", with: ">")
+        s = s.replacingOccurrences(of: "&nbsp;", with: " ")
+        s = s.replacingOccurrences(of: "\u{00A0}", with: " ")
+        // Strip any inner html tags if present
+        s = s.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Multi-Storefront Comparison
 
-    /// Look up an app across multiple storefronts simultaneously
+    /// Look up an app across multiple storefronts concurrently with a worker pool (max 3 at a time)
+    /// to avoid getting rate-limited by Apple servers.
     public func compareAcrossStorefronts(
         trackId: Int,
         storefronts: [Storefront]
     ) -> AsyncStream<PriceResult> {
         AsyncStream { continuation in
             Task {
+                let maxConcurrent = 3
+                var index = 0
+                let total = storefronts.count
+
                 await withTaskGroup(of: PriceResult.self) { group in
-                    for sf in storefronts {
+                    // Start initial batch
+                    while index < min(maxConcurrent, total) {
+                        let sf = storefronts[index]
+                        index += 1
                         group.addTask {
-                            do {
-                                let (app, iaps) = try await self.lookupAppWithIAPs(
-                                    trackId: trackId,
-                                    country: sf.code
-                                )
-
-                                let iapComparisons = iaps.map { iap in
-                                    IAPComparison(
-                                        name: iap.name,
-                                        formattedPrice: iap.formattedPrice,
-                                        priceValue: iap.priceValue,
-                                        usdEquivalent: nil // Computed later if exchange rates available
-                                    )
-                                }
-
-                                return PriceResult(
-                                    storefront: sf,
-                                    appPrice: app?.formattedPrice,
-                                    iapPrices: iapComparisons,
-                                    currency: app?.currency ?? sf.currencyCode,
-                                    isLoading: false,
-                                    error: nil
-                                )
-                            } catch {
-                                return PriceResult(
-                                    storefront: sf,
-                                    appPrice: nil,
-                                    iapPrices: [],
-                                    currency: sf.currencyCode,
-                                    isLoading: false,
-                                    error: error.localizedDescription
-                                )
-                            }
+                            await self.fetchStorefrontData(trackId: trackId, storefront: sf)
                         }
                     }
 
+                    // Process results and launch remaining tasks
                     for await result in group {
                         continuation.yield(result)
+
+                        if index < total {
+                            let nextSf = storefronts[index]
+                            index += 1
+                            group.addTask {
+                                await self.fetchStorefrontData(trackId: trackId, storefront: nextSf)
+                            }
+                        }
                     }
                 }
                 continuation.finish()
             }
         }
+    }
+
+    private func fetchStorefrontData(trackId: Int, storefront: Storefront) async -> PriceResult {
+        // 1. Fetch official iTunes metadata (App price, currency, rating, etc.)
+        var app: AppResult?
+        do {
+            app = try await lookupApp(trackId: trackId, country: storefront.code)
+        } catch {
+            // Non-fatal, continue to try web page
+        }
+
+        // 2. Fetch IAP prices from web page
+        let iaps = await fetchIAPs(trackId: trackId, country: storefront.code, defaultCurrency: storefront.currencyCode)
+
+        // 3. Handle unavailable apps
+        if app == nil && iaps.isEmpty {
+            return PriceResult(
+                storefront: storefront,
+                appPrice: nil,
+                iapPrices: [],
+                currency: storefront.currencyCode,
+                isLoading: false,
+                error: "Not available in \(storefront.name)"
+            )
+        }
+
+        let iapComparisons = iaps.map { iap in
+            IAPComparison(
+                name: iap.name,
+                formattedPrice: iap.formattedPrice,
+                priceValue: iap.priceValue,
+                usdEquivalent: nil
+            )
+        }
+
+        return PriceResult(
+            storefront: storefront,
+            appPrice: app?.formattedPrice ?? (app != nil ? "Free" : "Available"),
+            iapPrices: iapComparisons,
+            currency: app?.currency ?? storefront.currencyCode,
+            isLoading: false,
+            error: nil
+        )
     }
 
     // MARK: - Helpers

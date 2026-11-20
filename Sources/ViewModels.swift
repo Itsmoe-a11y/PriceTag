@@ -72,10 +72,12 @@ public final class CompareViewModel: ObservableObject {
         progress = 0
         total = selectedStorefronts.count
 
+        let storefrontsToQuery = selectedStorefronts
+
         compareTask = Task {
             let stream = iTunesService.shared.compareAcrossStorefronts(
                 trackId: app.trackId,
-                storefronts: selectedStorefronts
+                storefronts: storefrontsToQuery
             )
 
             for await result in stream {
@@ -83,12 +85,10 @@ public final class CompareViewModel: ObservableObject {
                 self.priceResults.append(result)
                 self.progress += 1
 
-                // Sort: cheapest app price first, errors at bottom
+                // Maintain the same display order as selectedStorefronts
+                let sfOrder = Dictionary(uniqueKeysWithValues: storefrontsToQuery.enumerated().map { ($1.code, $0) })
                 self.priceResults.sort { a, b in
-                    if a.error != nil && b.error == nil { return false }
-                    if a.error == nil && b.error != nil { return true }
-                    // Sort by storefront name as default
-                    return a.storefront.name < b.storefront.name
+                    (sfOrder[a.storefront.code] ?? 999) < (sfOrder[b.storefront.code] ?? 999)
                 }
             }
 
@@ -101,7 +101,7 @@ public final class CompareViewModel: ObservableObject {
         isLoading = false
     }
 
-    /// All unique IAP names across all storefronts
+    /// All unique IAP names across all storefronts in order of appearance
     public var allIAPNames: [String] {
         var seen = Set<String>()
         var names: [String] = []

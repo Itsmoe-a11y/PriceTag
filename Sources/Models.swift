@@ -6,7 +6,7 @@ import Foundation
 public struct AppResult: Identifiable, Codable, Hashable {
     public let trackId: Int
     public let trackName: String
-    public let bundleId: String
+    public let bundleId: String?
     public let artworkUrl100: String?
     public let artworkUrl512: String?
     public let sellerName: String?
@@ -23,7 +23,6 @@ public struct AppResult: Identifiable, Codable, Hashable {
     public var id: Int { trackId }
 
     public var artworkURL: URL? {
-        // Prefer 512 for detail, fall back to 100
         if let str = artworkUrl512, let url = URL(string: str) { return url }
         if let str = artworkUrl100, let url = URL(string: str) { return url }
         return nil
@@ -49,11 +48,25 @@ public struct SearchResponse: Codable {
 // MARK: - In-App Purchase
 
 public struct InAppPurchase: Identifiable, Hashable {
-    public let id = UUID()
+    public let id: UUID
     public let name: String
     public let formattedPrice: String
     public let priceValue: Double?
     public let currency: String
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        formattedPrice: String,
+        priceValue: Double? = nil,
+        currency: String = ""
+    ) {
+        self.id = id
+        self.name = name
+        self.formattedPrice = formattedPrice
+        self.priceValue = priceValue
+        self.currency = currency
+    }
 }
 
 // MARK: - Country / Storefront
@@ -65,26 +78,65 @@ public struct Storefront: Identifiable, Hashable, Codable {
     public let currencyCode: String  // "USD"
 
     public var id: String { code }
+
+    public init(code: String, name: String, flag: String, currencyCode: String) {
+        self.code = code
+        self.name = name
+        self.flag = flag
+        self.currencyCode = currencyCode
+    }
 }
 
 // MARK: - Price Comparison Result
 
 public struct PriceResult: Identifiable, Hashable {
-    public let id = UUID()
+    public let id: UUID
     public let storefront: Storefront
     public let appPrice: String?
     public let iapPrices: [IAPComparison]
     public let currency: String
     public let isLoading: Bool
     public let error: String?
+
+    public init(
+        id: UUID = UUID(),
+        storefront: Storefront,
+        appPrice: String?,
+        iapPrices: [IAPComparison],
+        currency: String,
+        isLoading: Bool = false,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.storefront = storefront
+        self.appPrice = appPrice
+        self.iapPrices = iapPrices
+        self.currency = currency
+        self.isLoading = isLoading
+        self.error = error
+    }
 }
 
 public struct IAPComparison: Identifiable, Hashable {
-    public let id = UUID()
+    public let id: UUID
     public let name: String
     public let formattedPrice: String
     public let priceValue: Double?
     public let usdEquivalent: Double?
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        formattedPrice: String,
+        priceValue: Double? = nil,
+        usdEquivalent: Double? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.formattedPrice = formattedPrice
+        self.priceValue = priceValue
+        self.usdEquivalent = usdEquivalent
+    }
 }
 
 // MARK: - Predefined Storefronts
