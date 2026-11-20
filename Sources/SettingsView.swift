@@ -18,7 +18,7 @@ public struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("PriceTag")
                                 .font(.title2.bold())
-                            Text("v1.0.1")
+                            Text("v1.0.2")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             Text("Compare App Store IAP prices across countries")

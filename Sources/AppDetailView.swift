@@ -1,10 +1,18 @@
 import SwiftUI
 
+public enum DisplayMode: String, CaseIterable, Identifiable {
+    case byCountry = "By Country"
+    case compare = "Compare"
+
+    public var id: String { rawValue }
+}
+
 public struct AppDetailView: View {
     public let app: AppResult
     @StateObject private var compareVM: CompareViewModel
     @EnvironmentObject private var settingsVM: SettingsViewModel
     @State private var showStorefrontPicker = false
+    @State private var displayMode: DisplayMode = .byCountry
 
     public init(app: AppResult) {
         self.app = app
@@ -13,14 +21,16 @@ public struct AppDetailView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 16) {
                 appHeader
                 actionButtons
+                infoBanner
+                viewModePicker
                 comparisonSection
             }
             .padding()
         }
-        .navigationTitle("Compare Prices")
+        .navigationTitle("Price Tag")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             compareVM.selectedStorefronts = settingsVM.favoriteStorefronts
@@ -129,7 +139,35 @@ public struct AppDetailView: View {
         }
     }
 
-    // MARK: - Comparison Results
+    // MARK: - Info Banner
+
+    private var infoBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundColor(.blue)
+                .font(.subheadline)
+            Text("Apple publicly lists the top 7–10 in-app purchases per country storefront. Switch views below to see all packages by country or side-by-side.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .padding(10)
+        .background(Color.blue.opacity(0.08))
+        .cornerRadius(10)
+    }
+
+    // MARK: - View Mode Picker
+
+    private var viewModePicker: some View {
+        Picker("View Mode", selection: $displayMode) {
+            ForEach(DisplayMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    // MARK: - Comparison Section
 
     private var comparisonSection: some View {
         VStack(spacing: 16) {
@@ -147,22 +185,58 @@ public struct AppDetailView: View {
             }
 
             if !compareVM.priceResults.isEmpty {
-                // App base price comparison
-                appPriceSection
-
-                // In-App Purchases comparison
-                if !compareVM.allIAPNames.isEmpty {
-                    iapSection
-                } else if !compareVM.isLoading {
-                    noIAPsCard
+                if displayMode == .byCountry {
+                    byCountryView
+                } else {
+                    compareGridView
                 }
             }
         }
     }
 
-    // MARK: - App Price Section
+    // MARK: - By Country View
 
-    private var appPriceSection: some View {
+    private var byCountryView: some View {
+        VStack(spacing: 12) {
+            ForEach(compareVM.priceResults) { result in
+                StorefrontDetailCard(result: result)
+            }
+        }
+    }
+
+    // MARK: - Compare Grid View
+
+    private var compareGridView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // App Base Price Section
+            appBasePriceSection
+
+            // Grouped IAP Cards
+            if !compareVM.comparisonGroups.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("In-App Purchases Comparison", systemImage: "creditcard.fill")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text("\(compareVM.comparisonGroups.count) groups")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    ForEach(compareVM.comparisonGroups) { group in
+                        GroupedIAPCard(group: group, compareVM: compareVM)
+                    }
+                }
+            } else if !compareVM.isLoading {
+                noIAPsCard
+            }
+        }
+    }
+
+    // MARK: - App Base Price Section
+
+    private var appBasePriceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("App Store Price", systemImage: "dollarsign.circle.fill")
                 .font(.headline)
@@ -198,29 +272,6 @@ public struct AppDetailView: View {
         }
     }
 
-    // MARK: - IAP Section
-
-    private var iapSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("In-App Purchases", systemImage: "creditcard.fill")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
-                Text("\(compareVM.allIAPNames.count) items")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            ForEach(compareVM.allIAPNames, id: \.self) { iapName in
-                IAPComparisonCard(
-                    iapName: iapName,
-                    results: compareVM.priceResults
-                )
-            }
-        }
-    }
-
     // MARK: - No IAPs Card
 
     private var noIAPsCard: some View {
@@ -242,19 +293,77 @@ public struct AppDetailView: View {
     }
 }
 
-// MARK: - IAP Comparison Card
+// MARK: - Storefront Detail Card (By Country View)
 
-public struct IAPComparisonCard: View {
-    public let iapName: String
-    public let results: [PriceResult]
+public struct StorefrontDetailCard: View {
+    public let result: PriceResult
 
-    private var iapRows: [(storefront: Storefront, iap: IAPComparison?)] {
-        results.compactMap { result in
-            guard result.error == nil else { return nil }
-            let matching = result.iapPrices.first { $0.name == iapName }
-            return (storefront: result.storefront, iap: matching)
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack {
+                Text(result.storefront.flag)
+                    .font(.title2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.storefront.name)
+                        .font(.headline)
+                    Text("Currency: \(result.storefront.currencyCode) · Base App: \(result.appPrice ?? "Free")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Text("\(result.iapPrices.count) packages")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.15))
+                    .foregroundColor(.orange)
+                    .cornerRadius(8)
+            }
+
+            Divider()
+
+            if let error = result.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            } else if result.iapPrices.isEmpty {
+                Text("No in-app purchases listed for this storefront.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(result.iapPrices.enumerated()), id: \.offset) { index, iap in
+                        HStack(alignment: .top) {
+                            Text("\(index + 1).")
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                                .frame(width: 22, alignment: .leading)
+                            Text(iap.name)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(iap.formattedPrice)
+                                .font(.subheadline.bold())
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
         }
+        .padding(14)
+        .background(Color(.systemGray6))
+        .cornerRadius(14)
     }
+}
+
+// MARK: - Grouped IAP Card (Compare View)
+
+public struct GroupedIAPCard: View {
+    public let group: IAPGroup
+    public let compareVM: CompareViewModel
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -262,31 +371,34 @@ public struct IAPComparisonCard: View {
                 Image(systemName: "tag.fill")
                     .foregroundColor(.orange)
                     .font(.caption)
-                Text(iapName)
+                Text(group.displayName)
                     .font(.subheadline.bold())
                     .foregroundColor(.primary)
             }
 
             Divider()
 
-            ForEach(Array(iapRows.enumerated()), id: \.offset) { _, row in
-                HStack {
-                    Text(row.storefront.flag)
-                        .font(.body)
-                    Text(row.storefront.name)
-                        .font(.subheadline)
-                    Spacer()
-                    if let iap = row.iap {
-                        Text(iap.formattedPrice)
-                            .font(.subheadline.bold())
-                            .foregroundColor(.orange)
-                    } else {
-                        Text("Not available")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+            ForEach(compareVM.priceResults) { res in
+                if res.error == nil {
+                    let matching = compareVM.findMatchingIAP(in: res, for: group)
+                    HStack {
+                        Text(res.storefront.flag)
+                            .font(.body)
+                        Text(res.storefront.name)
+                            .font(.subheadline)
+                        Spacer()
+                        if let iap = matching {
+                            Text(iap.formattedPrice)
+                                .font(.subheadline.bold())
+                                .foregroundColor(.orange)
+                        } else {
+                            Text("—")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
         }
         .padding(12)

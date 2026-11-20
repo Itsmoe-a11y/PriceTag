@@ -53,19 +53,22 @@ public struct InAppPurchase: Identifiable, Hashable {
     public let formattedPrice: String
     public let priceValue: Double?
     public let currency: String
+    public let isAnnualOrTier2: Bool
 
     public init(
         id: UUID = UUID(),
         name: String,
         formattedPrice: String,
         priceValue: Double? = nil,
-        currency: String = ""
+        currency: String = "",
+        isAnnualOrTier2: Bool = false
     ) {
         self.id = id
         self.name = name
         self.formattedPrice = formattedPrice
         self.priceValue = priceValue
         self.currency = currency
+        self.isAnnualOrTier2 = isAnnualOrTier2
     }
 }
 
@@ -123,19 +126,37 @@ public struct IAPComparison: Identifiable, Hashable {
     public let formattedPrice: String
     public let priceValue: Double?
     public let usdEquivalent: Double?
+    public let isAnnualOrTier2: Bool
 
     public init(
         id: UUID = UUID(),
         name: String,
         formattedPrice: String,
         priceValue: Double? = nil,
-        usdEquivalent: Double? = nil
+        usdEquivalent: Double? = nil,
+        isAnnualOrTier2: Bool = false
     ) {
         self.id = id
         self.name = name
         self.formattedPrice = formattedPrice
         self.priceValue = priceValue
         self.usdEquivalent = usdEquivalent
+        self.isAnnualOrTier2 = isAnnualOrTier2
+    }
+}
+
+// MARK: - Comparison Group (for Side-by-Side grouping)
+
+public struct IAPGroup: Identifiable, Hashable {
+    public var id: String { key }
+    public let key: String
+    public let displayName: String
+    public let isAnnualOrTier2: Bool
+
+    public init(key: String, displayName: String, isAnnualOrTier2: Bool = false) {
+        self.key = key
+        self.displayName = displayName
+        self.isAnnualOrTier2 = isAnnualOrTier2
     }
 }
 

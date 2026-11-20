@@ -87,8 +87,7 @@ public final class iTunesService {
     // MARK: - Parse IAPs from HTML
 
     private func parseIAPs(from html: String, defaultCurrency: String) -> [InAppPurchase] {
-        var results: [InAppPurchase] = []
-        var seen = Set<String>()
+        var rawPairs: [(name: String, price: String)] = []
 
         // Pattern 1: Rendered HTML list items: <div class="text-pair..."><span>Name</span> <span>Price</span></div>
         let pattern1 = #"class="text-pair[^"]*">\s*<span>(.*?)</span>\s*<span>(.*?)</span>\s*</div>"#
@@ -121,25 +120,43 @@ public final class iTunesService {
                     let price = cleanHTMLEntities(rawPrice)
 
                     guard !name.isEmpty, !price.isEmpty else { continue }
-
-                    // Key to deduplicate exact duplicates while keeping items with different prices
-                    let key = "\(name)|\(price)"
-                    if !seen.contains(key) {
-                        seen.insert(key)
-                        results.append(InAppPurchase(
-                            name: name,
-                            formattedPrice: price,
-                            priceValue: nil,
-                            currency: defaultCurrency
-                        ))
-                    }
+                    rawPairs.append((name, price))
                 }
 
-                // If first pattern found results, no need to fallback to second
-                if !results.isEmpty {
+                if !rawPairs.isEmpty {
                     break
                 }
             }
+        }
+
+        // Process and deduplicate exact duplicate (name, price) pairs while preserving distinct tiers
+        var results: [InAppPurchase] = []
+        var seenExact = Set<String>()
+        var nameCounts: [String: Int] = [:]
+
+        for pair in rawPairs {
+            let exactKey = "\(pair.name.lowercased())|\(pair.price)"
+            if seenExact.contains(exactKey) {
+                // Skip identical duplicates (e.g. YouTube Premium $20.99 listed 4 times)
+                continue
+            }
+            seenExact.insert(exactKey)
+
+            let normName = pair.name.lowercased()
+            let count = nameCounts[normName, default: 0]
+            nameCounts[normName] = count + 1
+
+            let isAnnualKeyword = pair.name.localizedCaseInsensitiveContains("annual") ||
+                                 pair.name.localizedCaseInsensitiveContains("year")
+            let isTier2 = count > 0 || isAnnualKeyword
+
+            results.append(InAppPurchase(
+                name: pair.name,
+                formattedPrice: pair.price,
+                priceValue: nil,
+                currency: defaultCurrency,
+                isAnnualOrTier2: isTier2
+            ))
         }
 
         return results
@@ -154,7 +171,6 @@ public final class iTunesService {
         s = s.replacingOccurrences(of: "&gt;", with: ">")
         s = s.replacingOccurrences(of: "&nbsp;", with: " ")
         s = s.replacingOccurrences(of: "\u{00A0}", with: " ")
-        // Strip any inner html tags if present
         s = s.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -174,7 +190,6 @@ public final class iTunesService {
                 let total = storefronts.count
 
                 await withTaskGroup(of: PriceResult.self) { group in
-                    // Start initial batch
                     while index < min(maxConcurrent, total) {
                         let sf = storefronts[index]
                         index += 1
@@ -183,7 +198,6 @@ public final class iTunesService {
                         }
                     }
 
-                    // Process results and launch remaining tasks
                     for await result in group {
                         continuation.yield(result)
 
@@ -207,7 +221,7 @@ public final class iTunesService {
         do {
             app = try await lookupApp(trackId: trackId, country: storefront.code)
         } catch {
-            // Non-fatal, continue to try web page
+            // Non-fatal
         }
 
         // 2. Fetch IAP prices from web page
@@ -230,7 +244,8 @@ public final class iTunesService {
                 name: iap.name,
                 formattedPrice: iap.formattedPrice,
                 priceValue: iap.priceValue,
-                usdEquivalent: nil
+                usdEquivalent: nil,
+                isAnnualOrTier2: iap.isAnnualOrTier2
             )
         }
 

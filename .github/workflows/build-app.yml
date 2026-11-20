@@ -14,10 +14,10 @@ on:
         type: boolean
         default: true
       release_tag:
-        description: 'Release Tag (defaults to v1.0.1)'
+        description: 'Release Tag (defaults to v1.0.2)'
         required: false
         type: string
-        default: 'v1.0.1'
+        default: 'v1.0.2'
 
 permissions:
   contents: write
@@ -86,10 +86,10 @@ jobs:
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.upload_release == 'true') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag || 'v1.0.1' }}
-          name: "PriceTag ${{ github.event.inputs.release_tag || 'v1.0.1' }}"
+          tag_name: ${{ github.event.inputs.release_tag || 'v1.0.2' }}
+          name: "PriceTag ${{ github.event.inputs.release_tag || 'v1.0.2' }}"
           body: |
-            ## PriceTag v1.0.1 - Fix App Store & IAP Price Comparison
+            ## PriceTag v1.0.2 - Full Storefront Breakdown & Smart Package Matching
 
             Compare in-app purchase prices across 47+ App Store storefronts worldwide.
 

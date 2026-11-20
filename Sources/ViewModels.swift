@@ -85,7 +85,6 @@ public final class CompareViewModel: ObservableObject {
                 self.priceResults.append(result)
                 self.progress += 1
 
-                // Maintain the same display order as selectedStorefronts
                 let sfOrder = Dictionary(uniqueKeysWithValues: storefrontsToQuery.enumerated().map { ($1.code, $0) })
                 self.priceResults.sort { a, b in
                     (sfOrder[a.storefront.code] ?? 999) < (sfOrder[b.storefront.code] ?? 999)
@@ -101,18 +100,69 @@ public final class CompareViewModel: ObservableObject {
         isLoading = false
     }
 
-    /// All unique IAP names across all storefronts in order of appearance
-    public var allIAPNames: [String] {
-        var seen = Set<String>()
-        var names: [String] = []
+    // MARK: - Smart Comparison Groups
+
+    /// Generates unified comparison groups across all storefronts using normalized matching
+    public var comparisonGroups: [IAPGroup] {
+        var groups: [IAPGroup] = []
+        var seenKeys = Set<String>()
+
         for result in priceResults {
             for iap in result.iapPrices {
-                if seen.insert(iap.name).inserted {
-                    names.append(iap.name)
+                let baseKey = normalizeName(iap.name)
+                let groupKey = iap.isAnnualOrTier2 ? "\(baseKey)_tier2" : "\(baseKey)_tier1"
+
+                if !seenKeys.contains(groupKey) {
+                    seenKeys.insert(groupKey)
+
+                    var display = iap.name
+                    if iap.isAnnualOrTier2 && !display.localizedCaseInsensitiveContains("annual") && !display.localizedCaseInsensitiveContains("year") {
+                        display = "\(display) (Tier 2 / Annual)"
+                    }
+
+                    groups.append(IAPGroup(
+                        key: groupKey,
+                        displayName: display,
+                        isAnnualOrTier2: iap.isAnnualOrTier2
+                    ))
                 }
             }
         }
-        return names
+
+        return groups
+    }
+
+    /// Finds the best matching IAP in a storefront for a given comparison group
+    public func findMatchingIAP(in result: PriceResult, for group: IAPGroup) -> IAPComparison? {
+        let targetBase = group.key.replacingOccurrences(of: "_tier1", with: "").replacingOccurrences(of: "_tier2", with: "")
+
+        // 1. Try exact match with tier
+        for iap in result.iapPrices {
+            let base = normalizeName(iap.name)
+            if base == targetBase && iap.isAnnualOrTier2 == group.isAnnualOrTier2 {
+                return iap
+            }
+        }
+
+        // 2. Try match on base key
+        for iap in result.iapPrices {
+            let base = normalizeName(iap.name)
+            if base == targetBase {
+                return iap
+            }
+        }
+
+        return nil
+    }
+
+    /// Helper to normalize names (e.g. "YouTube Premium" -> "youtube premium", "100 GB Month" -> "100 gb")
+    private func normalizeName(_ name: String) -> String {
+        var s = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        s = s.replacingOccurrences(of: "\\(.*?\\)", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\b(month|monthly|annual|year|yearly|paket[i]?)\\b", with: "", options: [.caseInsensitive, .regularExpression])
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return s.count > 1 ? s : name.lowercased()
     }
 }
 
