@@ -1,0 +1,116 @@
+name: Build PriceTag (.ipa & .tipa)
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      upload_release:
+        description: 'Upload package to GitHub Release'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release Tag (defaults to v1.0.0)'
+        required: false
+        type: string
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build_app:
+    name: Build PriceTag iOS App
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Cache Homebrew
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            /usr/local/Homebrew
+          key: brew-tools-${{ runner.os }}-xcodegen-ldid-v1
+          restore-keys: |
+            brew-tools-${{ runner.os }}-
+
+      - name: Install Build Toolchain
+        run: |
+          brew install xcodegen ldid
+
+      - name: Show Xcode & SDK Info
+        run: |
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Make Scripts Executable
+        run: |
+          chmod +x tools/*.sh
+
+      - name: Compile and Package PriceTag
+        run: |
+          ./tools/build-app.sh "$GITHUB_WORKSPACE"
+
+      - name: Verify IPA Structure & Entitlements
+        run: |
+          echo "==> Verifying Packages:"
+          ls -lh "$GITHUB_WORKSPACE/PriceTag.ipa" "$GITHUB_WORKSPACE/PriceTag.tipa"
+
+          echo "==> Verifying Mach-O entitlements:"
+          mkdir -p /tmp/verify
+          unzip -q "$GITHUB_WORKSPACE/PriceTag.ipa" -d /tmp/verify
+          ldid -e /tmp/verify/Payload/PriceTag.app/PriceTag
+
+          if ! ldid -e /tmp/verify/Payload/PriceTag.app/PriceTag | grep -q "application-identifier"; then
+            echo "FATAL: Entitlements missing from final binary!" >&2
+            exit 1
+          fi
+          echo "SUCCESS: PriceTag binary verified with valid entitlements."
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PriceTag-Packages
+          path: |
+            PriceTag.ipa
+            PriceTag.tipa
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.upload_release == 'true') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || 'v1.0.0' }}
+          name: "PriceTag ${{ github.event.inputs.release_tag || 'v1.0.0' }}"
+          body: |
+            ## PriceTag v1.0.0 - App Store IAP Price Comparison
+
+            Compare in-app purchase prices across 47+ App Store storefronts worldwide.
+
+            ### Features:
+            - 🔍 Search any app on the App Store
+            - 🌍 Compare prices across 47+ countries simultaneously
+            - 💰 See in-app purchase prices in local currencies (TRY, INR, BRL, etc.)
+            - 📊 Side-by-side comparison with country flags
+            - ⭐ Save favorite countries for quick comparisons
+            - 🏷️ App price + all IAPs shown per storefront
+
+            ### Popular Countries:
+            Turkey 🇹🇷 · India 🇮🇳 · Brazil 🇧🇷 · Argentina 🇦🇷 · Egypt 🇪🇬 · Pakistan 🇵🇰 · Nigeria 🇳🇬 · and 40+ more
+
+            ### Installation:
+            - **TrollStore**: Download `PriceTag.tipa` and open in TrollStore
+            - **Sideload**: Use `PriceTag.ipa` with your preferred sideloading method
+          files: |
+            PriceTag.ipa
+            PriceTag.tipa
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
